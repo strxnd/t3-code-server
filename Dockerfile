@@ -39,10 +39,7 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /usr/local/lib/node_modules /usr/local/lib/node_modules
-COPY --from=build /usr/local/bin/t3 /usr/local/bin/t3
-COPY --from=build /usr/local/bin/codex /usr/local/bin/codex
-COPY --from=build /usr/local/bin/claude /usr/local/bin/claude
-COPY --from=build /usr/local/bin/opencode /usr/local/bin/opencode
+COPY --from=build /usr/local/bin /usr/local/bin
 
 RUN set -eux; \
     if getent group 1000 >/dev/null; then \
