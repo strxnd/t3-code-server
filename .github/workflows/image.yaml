@@ -1,0 +1,76 @@
+name: image
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/strxnd/t3-code-server
+
+jobs:
+  image:
+    name: Build and publish image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build smoke-test image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test image
+        run: |
+          set -eux
+          docker run --rm "${IMAGE_NAME}:smoke" t3 --version
+          docker run --rm "${IMAGE_NAME}:smoke" codex --version
+          docker run --rm "${IMAGE_NAME}:smoke" claude --version
+          docker run --rm "${IMAGE_NAME}:smoke" opencode --version
+          docker run --rm "${IMAGE_NAME}:smoke" git --version
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=t3-0.0.28-node-24.18.0
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=t3-code-server
+            org.opencontainers.image.description=Official T3 Code headless server image for Kubernetes
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
