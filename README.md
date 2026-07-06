@@ -8,7 +8,7 @@ Image: `ghcr.io/strxnd/t3-code-server`
 
 - Base: `node:24.18.0-bookworm-slim` pinned by digest
 - CLIs: `t3@0.0.28`, `@openai/codex@0.142.5`, `@anthropic-ai/claude-code@2.1.201`, `opencode-ai@1.17.13`
-- Runtime tools: `ca-certificates`, `curl`, `git`, `gh@2.96.0`, `openssh-client`, `bash`, `tini`, `jq`, `ripgrep`, `procps`, `less`, `tzdata`
+- Runtime tools: `ca-certificates`, `curl`, `git`, `gh@2.96.0`, `openssh-client`, `bash`, `tini`, `jq`, `ripgrep`, `procps`, `less`, `nano`, `vim-tiny`, `tzdata`
 - Non-root user: `t3` with UID/GID `1000:1000`
 
 Cursor CLI is not installed by default. It can be added later, but its official install path is less pin-friendly than the pinned npm CLIs above.

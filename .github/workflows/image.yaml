@@ -45,6 +45,8 @@ jobs:
           docker run --rm "${IMAGE_NAME}:smoke" opencode --version
           docker run --rm "${IMAGE_NAME}:smoke" gh --version
           docker run --rm "${IMAGE_NAME}:smoke" git --version
+          docker run --rm "${IMAGE_NAME}:smoke" nano --version
+          docker run --rm "${IMAGE_NAME}:smoke" vi --version
 
       - name: Log in to GHCR
         uses: docker/login-action@v3

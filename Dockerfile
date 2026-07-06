@@ -33,11 +33,13 @@ RUN set -eux; \
       git \
       jq \
       less \
+      nano \
       openssh-client \
       procps \
       ripgrep \
       tini \
-      tzdata; \
+      tzdata \
+      vim-tiny; \
     curl -fsSLo /tmp/gh.deb "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.deb"; \
     echo "${GH_DEB_SHA256}  /tmp/gh.deb" | sha256sum -c -; \
     apt-get install -y --no-install-recommends /tmp/gh.deb; \
