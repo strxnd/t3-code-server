@@ -1,3 +1,23 @@
+FROM docker.io/library/node:24.18.0-bookworm-slim@sha256:b31e7a42fdf8b8aa5f5ed477c72d694301273f1069c5a2f71d53c6482e99a2fc AS build
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      g++ \
+      make \
+      python3; \
+    rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    npm install -g \
+      t3@0.0.28 \
+      @openai/codex@0.142.5 \
+      @anthropic-ai/claude-code@2.1.201 \
+      opencode-ai@1.17.13; \
+    npm cache clean --force
+
 FROM docker.io/library/node:24.18.0-bookworm-slim@sha256:b31e7a42fdf8b8aa5f5ed477c72d694301273f1069c5a2f71d53c6482e99a2fc
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -18,13 +38,11 @@ RUN set -eux; \
       tzdata; \
     rm -rf /var/lib/apt/lists/*
 
-RUN set -eux; \
-    npm install -g \
-      t3@0.0.28 \
-      @openai/codex@0.142.5 \
-      @anthropic-ai/claude-code@2.1.201 \
-      opencode-ai@1.17.13; \
-    npm cache clean --force
+COPY --from=build /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=build /usr/local/bin/t3 /usr/local/bin/t3
+COPY --from=build /usr/local/bin/codex /usr/local/bin/codex
+COPY --from=build /usr/local/bin/claude /usr/local/bin/claude
+COPY --from=build /usr/local/bin/opencode /usr/local/bin/opencode
 
 RUN set -eux; \
     if getent group 1000 >/dev/null; then \
