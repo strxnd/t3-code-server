@@ -21,6 +21,8 @@ RUN set -eux; \
 FROM docker.io/library/node:24.18.0-bookworm-slim@sha256:b31e7a42fdf8b8aa5f5ed477c72d694301273f1069c5a2f71d53c6482e99a2fc
 
 ARG DEBIAN_FRONTEND=noninteractive
+ARG GH_VERSION=2.96.0
+ARG GH_DEB_SHA256=11a731f4e0ca8c3db96ef6d2cc404dcab3d78247ce0e07c53e07117e7627d6a1
 
 RUN set -eux; \
     apt-get update; \
@@ -36,6 +38,10 @@ RUN set -eux; \
       ripgrep \
       tini \
       tzdata; \
+    curl -fsSLo /tmp/gh.deb "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.deb"; \
+    echo "${GH_DEB_SHA256}  /tmp/gh.deb" | sha256sum -c -; \
+    apt-get install -y --no-install-recommends /tmp/gh.deb; \
+    rm -f /tmp/gh.deb; \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /usr/local/lib/node_modules /usr/local/lib/node_modules
