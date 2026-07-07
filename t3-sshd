@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+die() {
+  printf 't3-sshd: %s\n' "$*" >&2
+  exit 1
+}
+
+warn() {
+  printf 't3-sshd: warning: %s\n' "$*" >&2
+}
+
+require_cap() {
+  local cap_name="$1"
+  local cap_bit="$2"
+  local cap_eff_hex
+  cap_eff_hex="$(awk '/^CapEff:/ { print $2 }' /proc/self/status 2>/dev/null || true)"
+  [[ -n "$cap_eff_hex" ]] || die "cannot inspect Linux capabilities from /proc/self/status"
+
+  if ! (( (16#$cap_eff_hex & (1 << cap_bit)) != 0 )); then
+    die "missing ${cap_name}; run the SSH sidecar as root with the required sshd capabilities"
+  fi
+}
+
+ensure_owner() {
+  local owner="$1"
+  local group="$2"
+  local path="$3"
+  local expected_uid expected_gid current_uid current_gid
+
+  expected_uid="$(id -u "$owner")"
+  expected_gid="$(getent group "$group" | cut -d: -f3)"
+  current_uid="$(stat -c '%u' "$path")"
+  current_gid="$(stat -c '%g' "$path")"
+
+  if [[ "$current_uid:$current_gid" != "$expected_uid:$expected_gid" ]]; then
+    chown "$owner:$group" "$path" || die "unable to chown $path to $owner:$group; CAP_CHOWN may be required"
+  fi
+}
+
+ensure_mode() {
+  local mode="$1"
+  local path="$2"
+  local current_mode
+
+  current_mode="$(stat -c '%a' "$path")"
+  if [[ "$current_mode" != "$mode" ]]; then
+    chmod "$mode" "$path" || die "unable to chmod $path to $mode; CAP_FOWNER may be required"
+  fi
+}
+
+generate_host_key() {
+  local type="$1"
+  local bits="$2"
+  local key_path="$3"
+
+  [[ ! -L "$key_path" ]] || die "refusing to use symlinked host key $key_path"
+  [[ ! -L "${key_path}.pub" ]] || die "refusing to use symlinked host public key ${key_path}.pub"
+
+  if [[ ! -s "$key_path" ]]; then
+    rm -f "$key_path" "${key_path}.pub"
+    if [[ -n "$bits" ]]; then
+      ssh-keygen -q -t "$type" -b "$bits" -N '' -C '' -f "$key_path"
+    else
+      ssh-keygen -q -t "$type" -N '' -C '' -f "$key_path"
+    fi
+  fi
+
+  ensure_owner root root "$key_path"
+  ensure_mode 600 "$key_path"
+
+  if [[ -e "${key_path}.pub" ]]; then
+    ensure_owner root root "${key_path}.pub"
+    ensure_mode 644 "${key_path}.pub"
+  fi
+}
+
+[[ "$(id -u)" == "0" ]] || die "must run as root so OpenSSH can authenticate and switch to user t3"
+command -v /usr/sbin/sshd >/dev/null || die "openssh-server is not installed"
+command -v ssh-keygen >/dev/null || die "ssh-keygen is not installed"
+getent passwd t3 >/dev/null || die "login user t3 does not exist"
+getent group t3 >/dev/null || die "login group t3 does not exist"
+
+require_cap CAP_CHOWN 0
+require_cap CAP_DAC_OVERRIDE 1
+require_cap CAP_FOWNER 3
+require_cap CAP_SETGID 6
+require_cap CAP_SETUID 7
+require_cap CAP_SYS_CHROOT 18
+
+ssh_port="${T3CODE_SSH_PORT:-2222}"
+[[ "$ssh_port" =~ ^[0-9]+$ ]] || die "T3CODE_SSH_PORT must be a numeric TCP port"
+ssh_port_num=$((10#$ssh_port))
+(( ssh_port_num >= 1024 && ssh_port_num <= 65535 )) || die "T3CODE_SSH_PORT must be between 1024 and 65535"
+
+t3_home="$(getent passwd t3 | cut -d: -f6)"
+[[ "$t3_home" == "/home/t3" ]] || die "user t3 must have home directory /home/t3, found $t3_home"
+
+ssh_dir="${t3_home}/.ssh"
+authorized_keys="${ssh_dir}/authorized_keys"
+host_key_dir="${ssh_dir}/sshd"
+sshd_config="$(mktemp /tmp/t3-sshd_config.XXXXXX)"
+
+install -d -m 0755 -o root -g root /run/sshd || die "unable to prepare /run/sshd; root filesystem must be writable"
+
+[[ ! -L "$ssh_dir" ]] || die "refusing to use symlinked SSH directory $ssh_dir"
+[[ ! -e "$ssh_dir" || -d "$ssh_dir" ]] || die "$ssh_dir exists but is not a directory"
+mkdir -p "$ssh_dir" || die "unable to create $ssh_dir; CAP_DAC_OVERRIDE may be required for a t3-owned home directory"
+ensure_owner t3 t3 "$ssh_dir"
+ensure_mode 700 "$ssh_dir"
+
+if [[ -n "${T3CODE_SSH_AUTHORIZED_KEYS:-}" ]]; then
+  [[ ! -L "$authorized_keys" ]] || die "refusing to overwrite symlinked authorized_keys"
+  tmp_keys="$(mktemp "${ssh_dir}/authorized_keys.XXXXXX")"
+  printf '%s\n' "$T3CODE_SSH_AUTHORIZED_KEYS" >"$tmp_keys"
+  ensure_owner t3 t3 "$tmp_keys"
+  ensure_mode 600 "$tmp_keys"
+  mv -f "$tmp_keys" "$authorized_keys"
+fi
+
+if [[ -e "$authorized_keys" ]]; then
+  [[ ! -L "$authorized_keys" ]] || die "refusing to use symlinked authorized_keys"
+  ensure_owner t3 t3 "$authorized_keys"
+  ensure_mode 600 "$authorized_keys"
+else
+  warn "no ${authorized_keys} file found and T3CODE_SSH_AUTHORIZED_KEYS is empty; public-key login will fail"
+fi
+
+[[ ! -L "$host_key_dir" ]] || die "refusing to use symlinked host key directory $host_key_dir"
+[[ ! -e "$host_key_dir" || -d "$host_key_dir" ]] || die "$host_key_dir exists but is not a directory"
+mkdir -p "$host_key_dir" || die "unable to create $host_key_dir"
+ensure_owner root root "$host_key_dir"
+ensure_mode 700 "$host_key_dir"
+
+generate_host_key ed25519 '' "${host_key_dir}/ssh_host_ed25519_key"
+generate_host_key rsa 4096 "${host_key_dir}/ssh_host_rsa_key"
+
+chmod 600 "$sshd_config"
+cat >"$sshd_config" <<EOF
+Port ${ssh_port_num}
+ListenAddress 0.0.0.0
+HostKey ${host_key_dir}/ssh_host_ed25519_key
+HostKey ${host_key_dir}/ssh_host_rsa_key
+AllowUsers t3
+AuthorizedKeysFile .ssh/authorized_keys
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+PermitRootLogin no
+PubkeyAuthentication yes
+UsePAM no
+X11Forwarding no
+AllowTcpForwarding yes
+UseDNS no
+PrintMotd no
+PrintLastLog no
+SetEnv T3CODE_HOME=/data/t3 CODEX_HOME=/home/t3/.codex
+Subsystem sftp internal-sftp
+PidFile /tmp/sshd.pid
+EOF
+
+/usr/sbin/sshd -t -f "$sshd_config" || die "generated sshd_config failed validation"
+
+if [[ "$#" -gt 0 ]]; then
+  exec /usr/sbin/sshd -f "$sshd_config" "$@"
+fi
+
+exec /usr/sbin/sshd -D -e -f "$sshd_config"

@@ -47,6 +47,54 @@ jobs:
           docker run --rm "${IMAGE_NAME}:smoke" git --version
           docker run --rm "${IMAGE_NAME}:smoke" nano --version
           docker run --rm "${IMAGE_NAME}:smoke" vi --version
+          docker run --rm "${IMAGE_NAME}:smoke" sh -c 'test "$(id -u):$(id -g)" = "1000:1000"'
+          docker run --rm "${IMAGE_NAME}:smoke" sh -c 'for key in /etc/ssh/ssh_host_*_key; do [ ! -e "$key" ] || exit 1; done'
+          docker run --rm --user 0:0 "${IMAGE_NAME}:smoke" t3-sshd -t
+
+          tmpdir="$(mktemp -d)"
+          cid=""
+          trap 'if [ -n "$cid" ]; then docker rm -f "$cid" >/dev/null 2>&1 || true; fi; rm -rf "$tmpdir"' EXIT
+          ssh-keygen -q -t ed25519 -N '' -C smoke -f "$tmpdir/id_ed25519"
+          cid="$(
+            docker run -d --rm --user 0:0 \
+              -e T3CODE_SSH_AUTHORIZED_KEYS="$(cat "$tmpdir/id_ed25519.pub")" \
+              -p 127.0.0.1::2222 \
+              "${IMAGE_NAME}:smoke" t3-sshd
+          )"
+          port="$(docker port "$cid" 2222/tcp | sed 's/.*://')"
+
+          for i in $(seq 1 30); do
+            if ssh \
+              -o BatchMode=yes \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile="$tmpdir/known_hosts" \
+              -i "$tmpdir/id_ed25519" \
+              -p "$port" \
+              t3@127.0.0.1 \
+              'test "$HOME" = /home/t3 && test "$(id -u):$(id -g)" = "1000:1000"'
+            then
+              break
+            fi
+            sleep 1
+          done
+
+          ssh \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile="$tmpdir/known_hosts" \
+            -i "$tmpdir/id_ed25519" \
+            -p "$port" \
+            t3@127.0.0.1 \
+            'test "$HOME" = /home/t3 && pwd'
+
+          printf 'pwd\nquit\n' | sftp \
+            -b - \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile="$tmpdir/known_hosts" \
+            -i "$tmpdir/id_ed25519" \
+            -P "$port" \
+            t3@127.0.0.1
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -61,7 +109,7 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=t3-0.0.28-node-24.18.0
+            type=raw,value=t3-0.0.28-node-24.18.0-sshd
             type=sha,prefix=sha-,format=short
             type=raw,value=latest
           labels: |

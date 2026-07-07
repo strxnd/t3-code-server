@@ -35,6 +35,7 @@ RUN set -eux; \
       less \
       nano \
       openssh-client \
+      openssh-server \
       procps \
       ripgrep \
       tini \
@@ -44,12 +45,15 @@ RUN set -eux; \
     echo "${GH_DEB_SHA256}  /tmp/gh.deb" | sha256sum -c -; \
     apt-get install -y --no-install-recommends /tmp/gh.deb; \
     rm -f /tmp/gh.deb; \
+    rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub; \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /usr/local/lib/node_modules /usr/local/lib/node_modules
 COPY --from=build /usr/local/bin /usr/local/bin
+COPY t3-sshd /usr/local/bin/t3-sshd
 
 RUN set -eux; \
+    chmod 0755 /usr/local/bin/t3-sshd; \
     if getent group 1000 >/dev/null; then \
       groupmod --new-name t3 "$(getent group 1000 | cut -d: -f1)"; \
     else \
@@ -61,7 +65,20 @@ RUN set -eux; \
       useradd --uid 1000 --gid 1000 --create-home --home-dir /home/t3 --shell /bin/bash t3; \
     fi; \
     mkdir -p /home/t3/.codex /home/t3/.local/bin /data/t3 /workspace; \
-    chown -R 1000:1000 /home/t3 /data/t3 /workspace
+    chown -R 1000:1000 /home/t3 /data/t3 /workspace; \
+    passwd --delete t3; \
+    printf '%s\n' \
+      'export T3CODE_HOME="${T3CODE_HOME:-/data/t3}"' \
+      'export CODEX_HOME="${CODEX_HOME:-/home/t3/.codex}"' \
+      'case ":$PATH:" in' \
+      '  *:/usr/local/bin:*) ;;' \
+      '  *) export PATH="/usr/local/bin:$PATH" ;;' \
+      'esac' \
+      'case ":$PATH:" in' \
+      '  *:/home/t3/.local/bin:*) ;;' \
+      '  *) export PATH="/home/t3/.local/bin:$PATH" ;;' \
+      'esac' \
+      > /etc/profile.d/t3-code-server.sh
 
 ENV HOME=/home/t3 \
     T3CODE_HOME=/data/t3 \
@@ -71,7 +88,7 @@ ENV HOME=/home/t3 \
 USER 1000:1000
 WORKDIR /workspace
 
-EXPOSE 3773
+EXPOSE 3773 2222
 
 ENTRYPOINT ["tini", "--"]
 CMD ["t3", "serve", "--host", "0.0.0.0", "--port", "3773", "--base-dir", "/data/t3", "--no-browser", "/workspace"]
