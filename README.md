@@ -6,9 +6,9 @@ Image: `ghcr.io/strxnd/t3-code-server`
 
 ## Contents
 
-- Base: `node:24.18.0-bookworm-slim` pinned by digest
-- CLIs: `t3@0.0.28`, `@openai/codex@0.142.5`, `@anthropic-ai/claude-code@2.1.201`, `opencode-ai@1.17.13`
-- Runtime tools: `ca-certificates`, `curl`, `git`, `gh@2.96.0`, `openssh-client`, `openssh-server`, `bash`, `tini`, `jq`, `ripgrep`, `procps`, `less`, `nano`, `vim-tiny`, `tzdata`
+- Base: versioned `node:bookworm-slim`, pinned by digest
+- CLIs: version-pinned `t3`, Codex, Claude Code, and OpenCode
+- Runtime tools: `ca-certificates`, `curl`, `git`, version-pinned `gh`, `openssh-client`, `openssh-server`, `bash`, `tini`, `jq`, `ripgrep`, `procps`, `less`, `nano`, `vim-tiny`, `tzdata`
 - Non-root user: `t3` with UID/GID `1000:1000`
 - Optional SSH sidecar launcher: `/usr/local/bin/t3-sshd`
 
@@ -95,10 +95,15 @@ The sidecar should mount the same `/home/t3`, `/workspace`, and `/data` volumes.
 Use Kubernetes `args` instead of `command` if you want to keep the image
 `tini` entrypoint:
 
+The example uses `latest` for readability. For production, deploy an immutable
+`ghcr.io/strxnd/t3-code-server@sha256:<digest>` reference and update that digest
+through the deployment repository or a GitOps image updater.
+
 ```yaml
 containers:
   - name: t3-code
-    image: ghcr.io/strxnd/t3-code-server:t3-0.0.28-node-24.18.0-sshd
+    image: ghcr.io/strxnd/t3-code-server:latest
+    imagePullPolicy: Always
     ports:
       - name: http
         containerPort: 3773
@@ -114,7 +119,8 @@ containers:
         mountPath: /data
 
   - name: t3-ssh
-    image: ghcr.io/strxnd/t3-code-server:t3-0.0.28-node-24.18.0-sshd
+    image: ghcr.io/strxnd/t3-code-server:latest
+    imagePullPolicy: Always
     args: ["/usr/local/bin/t3-sshd"]
     ports:
       - name: ssh
@@ -163,12 +169,39 @@ keys, passwords, or authorized keys are baked into the image.
 The generated SSH config uses `internal-sftp`, allows TCP forwarding, disables
 PAM, disables root login, and restricts login to user `t3`.
 
+## Automated Updates
+
+[`renovate.json`](renovate.json) keeps the Node base image and digest, the
+versioned CLIs, GitHub CLI, and GitHub Actions current. Non-major and digest
+updates are auto-merged only after the image workflow succeeds; major updates
+remain open for review. Install and enable the Renovate GitHub App for this
+repository to activate it.
+
+The Dockerfile verifies the GitHub CLI package against the checksum manifest
+attached to the same immutable GitHub release. This lets Renovate update its
+single version pin without a separate checksum-maintenance commit.
+
+The image workflow runs for pull requests, pushes, and every Monday at 03:23
+UTC. Pull requests build and smoke-test without publishing. The weekly run
+bypasses the Docker cache so Debian package updates are included, then publishes
+`latest` and a unique `rebuild-<run-id>` tag.
+
+Publishing a new image does not restart existing Kubernetes Pods.
+`imagePullPolicy: Always` only resolves the current image when a container
+starts. For unattended rollouts, configure Flux, Argo CD Image Updater, or
+Renovate in the deployment repository to commit each newly published digest.
+This repository does not contain the cluster manifests, so the rollout half of
+the automation must be configured where those manifests live.
+
 ## Publishing
 
 The GitHub Actions workflow builds and smoke-tests the image, then pushes:
 
-- `ghcr.io/strxnd/t3-code-server:t3-0.0.28-node-24.18.0-sshd`
+- `ghcr.io/strxnd/t3-code-server:t3-<t3-version>-node-<node-version>-sshd`
 - `ghcr.io/strxnd/t3-code-server:sha-<shortsha>`
 - `ghcr.io/strxnd/t3-code-server:latest`
+
+Scheduled rebuilds instead push `rebuild-<run-id>` and `latest`, leaving the
+source-based version and commit tags unchanged.
 
 It uses `GITHUB_TOKEN` with `packages: write`. After the first push, make the GHCR package public in the GitHub package settings.
