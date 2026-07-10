@@ -26,6 +26,7 @@ jobs:
     name: Validate image
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -53,6 +54,7 @@ jobs:
     name: Build and publish image
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write

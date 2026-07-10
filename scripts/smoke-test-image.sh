@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -euxo pipefail
 
 image="${1:?usage: smoke-test-image.sh IMAGE}"
 
-docker run --rm "$image" t3 --version
-docker run --rm "$image" codex --version
-docker run --rm "$image" claude --version
-docker run --rm "$image" opencode --version
-docker run --rm "$image" gh --version
-docker run --rm "$image" git --version
-docker run --rm "$image" nano --version
-docker run --rm "$image" vi --version
-docker run --rm "$image" sh -c 'test "$(id -u):$(id -g)" = "1000:1000"'
-docker run --rm "$image" sh -c 'for key in /etc/ssh/ssh_host_*_key; do [ ! -e "$key" ] || exit 1; done'
-docker run --rm --user 0:0 "$image" t3-sshd -t
+timeout 30s docker run --rm "$image" t3 --version
+timeout 30s docker run --rm "$image" codex --version
+timeout 30s docker run --rm "$image" claude --version
+timeout 30s docker run --rm "$image" opencode --version
+timeout 30s docker run --rm "$image" gh --version
+timeout 30s docker run --rm "$image" git --version
+timeout 30s docker run --rm "$image" nano --version
+timeout 30s docker run --rm "$image" vi --version
+timeout 30s docker run --rm "$image" sh -c 'test "$(id -u):$(id -g)" = "1000:1000"'
+timeout 30s docker run --rm "$image" sh -c 'for key in /etc/ssh/ssh_host_*_key; do [ ! -e "$key" ] || exit 1; done'
+timeout 30s docker run --rm --user 0:0 "$image" t3-sshd -t
 
 tmpdir="$(mktemp -d)"
 server_cid=""
@@ -24,7 +24,7 @@ server_cid="$(docker run -d --rm -p 127.0.0.1::3773 "$image")"
 server_port="$(docker port "$server_cid" 3773/tcp | sed 's/.*://')"
 server_ready="false"
 for _ in $(seq 1 30); do
-  if curl -fsS "http://127.0.0.1:${server_port}/" >/dev/null; then
+  if curl --max-time 2 -fsS "http://127.0.0.1:${server_port}/" >/dev/null; then
     server_ready="true"
     break
   fi
@@ -47,6 +47,7 @@ ssh_ready="false"
 for _ in $(seq 1 30); do
   if ssh \
     -o BatchMode=yes \
+    -o ConnectTimeout=5 \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile="$tmpdir/known_hosts" \
     -i "$tmpdir/id_ed25519" \
@@ -63,6 +64,7 @@ done
 
 ssh \
   -o BatchMode=yes \
+  -o ConnectTimeout=5 \
   -o StrictHostKeyChecking=no \
   -o UserKnownHostsFile="$tmpdir/known_hosts" \
   -i "$tmpdir/id_ed25519" \
@@ -73,6 +75,7 @@ ssh \
 printf 'pwd\nquit\n' | sftp \
   -b - \
   -o BatchMode=yes \
+  -o ConnectTimeout=5 \
   -o StrictHostKeyChecking=no \
   -o UserKnownHostsFile="$tmpdir/known_hosts" \
   -i "$tmpdir/id_ed25519" \
