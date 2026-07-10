@@ -18,6 +18,17 @@
   ],
   "packageRules": [
     {
+      "description": "Track pinned T3 Code nightly releases",
+      "matchDatasources": [
+        "npm"
+      ],
+      "matchPackageNames": [
+        "t3"
+      ],
+      "ignoreUnstable": false,
+      "allowedVersions": "/-nightly\\./"
+    },
+    {
       "description": "Automerge non-major updates after checks pass",
       "matchUpdateTypes": [
         "digest",

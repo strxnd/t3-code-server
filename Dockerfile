@@ -1,5 +1,5 @@
 # renovate: datasource=npm packageName=t3
-ARG T3_VERSION=0.0.28
+ARG T3_VERSION=0.0.29-nightly.20260709.769
 # renovate: datasource=npm packageName=@openai/codex
 ARG CODEX_VERSION=0.144.1
 # renovate: datasource=npm packageName=@anthropic-ai/claude-code
