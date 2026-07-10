@@ -1,6 +1,21 @@
+# renovate: datasource=npm packageName=t3
+ARG T3_VERSION=0.0.28
+# renovate: datasource=npm packageName=@openai/codex
+ARG CODEX_VERSION=0.142.5
+# renovate: datasource=npm packageName=@anthropic-ai/claude-code
+ARG CLAUDE_CODE_VERSION=2.1.201
+# renovate: datasource=npm packageName=opencode-ai
+ARG OPENCODE_VERSION=1.17.13
+# renovate: datasource=github-releases packageName=cli/cli
+ARG GH_VERSION=2.96.0
+
 FROM docker.io/library/node:24.18.0-bookworm-slim@sha256:b31e7a42fdf8b8aa5f5ed477c72d694301273f1069c5a2f71d53c6482e99a2fc AS build
 
 ARG DEBIAN_FRONTEND=noninteractive
+ARG T3_VERSION
+ARG CODEX_VERSION
+ARG CLAUDE_CODE_VERSION
+ARG OPENCODE_VERSION
 
 RUN set -eux; \
     apt-get update; \
@@ -12,17 +27,16 @@ RUN set -eux; \
 
 RUN set -eux; \
     npm install -g \
-      t3@0.0.28 \
-      @openai/codex@0.142.5 \
-      @anthropic-ai/claude-code@2.1.201 \
-      opencode-ai@1.17.13; \
+      "t3@${T3_VERSION}" \
+      "@openai/codex@${CODEX_VERSION}" \
+      "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+      "opencode-ai@${OPENCODE_VERSION}"; \
     npm cache clean --force
 
 FROM docker.io/library/node:24.18.0-bookworm-slim@sha256:b31e7a42fdf8b8aa5f5ed477c72d694301273f1069c5a2f71d53c6482e99a2fc
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG GH_VERSION=2.96.0
-ARG GH_DEB_SHA256=11a731f4e0ca8c3db96ef6d2cc404dcab3d78247ce0e07c53e07117e7627d6a1
+ARG GH_VERSION
 
 RUN set -eux; \
     apt-get update; \
@@ -41,10 +55,13 @@ RUN set -eux; \
       tini \
       tzdata \
       vim-tiny; \
-    curl -fsSLo /tmp/gh.deb "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.deb"; \
-    echo "${GH_DEB_SHA256}  /tmp/gh.deb" | sha256sum -c -; \
-    apt-get install -y --no-install-recommends /tmp/gh.deb; \
-    rm -f /tmp/gh.deb; \
+    gh_deb="gh_${GH_VERSION}_linux_$(dpkg --print-architecture).deb"; \
+    curl -fsSLo "/tmp/${gh_deb}" "https://github.com/cli/cli/releases/download/v${GH_VERSION}/${gh_deb}"; \
+    curl -fsSLo /tmp/gh_checksums.txt "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_checksums.txt"; \
+    awk -v file="${gh_deb}" '$2 == file { print; found=1 } END { exit !found }' /tmp/gh_checksums.txt > /tmp/gh_checksum; \
+    (cd /tmp && sha256sum -c gh_checksum); \
+    apt-get install -y --no-install-recommends "/tmp/${gh_deb}"; \
+    rm -f "/tmp/${gh_deb}" /tmp/gh_checksum /tmp/gh_checksums.txt; \
     rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub; \
     rm -rf /var/lib/apt/lists/*
 

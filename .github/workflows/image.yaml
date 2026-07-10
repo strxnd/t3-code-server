@@ -6,7 +6,14 @@ on:
       - main
     tags:
       - "*"
+  pull_request:
+  schedule:
+    - cron: "23 3 * * 1"
   workflow_dispatch:
+
+concurrency:
+  group: image-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -27,12 +34,40 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Resolve image version
+        id: version
+        run: |
+          set -euo pipefail
+          t3_version="$(sed -n 's/^ARG T3_VERSION=//p' Dockerfile)"
+          node_version="$(sed -n 's/^FROM .*node:\([0-9][0-9.]*\)-.*$/\1/p' Dockerfile | head -n 1)"
+          test -n "$t3_version"
+          test -n "$node_version"
+          echo "tag=t3-${t3_version}-node-${node_version}-sshd" >> "$GITHUB_OUTPUT"
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ steps.version.outputs.tag }},enable=${{ github.event_name != 'schedule' }}
+            type=sha,prefix=sha-,format=short,enable=${{ github.event_name != 'schedule' }}
+            type=raw,value=rebuild-${{ github.run_id }},enable=${{ github.event_name == 'schedule' }}
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=t3-code-server
+            org.opencontainers.image.description=Official T3 Code headless server image for Kubernetes
+
       - name: Build smoke-test image
         uses: docker/build-push-action@v6
         with:
           context: .
           load: true
-          tags: ${{ env.IMAGE_NAME }}:smoke
+          tags: |
+            ${{ env.IMAGE_NAME }}:smoke
+            ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          no-cache: ${{ github.event_name == 'schedule' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -52,18 +87,34 @@ jobs:
           docker run --rm --user 0:0 "${IMAGE_NAME}:smoke" t3-sshd -t
 
           tmpdir="$(mktemp -d)"
-          cid=""
-          trap 'if [ -n "$cid" ]; then docker rm -f "$cid" >/dev/null 2>&1 || true; fi; rm -rf "$tmpdir"' EXIT
+          server_cid=""
+          ssh_cid=""
+          trap 'for cid in "$server_cid" "$ssh_cid"; do if [ -n "$cid" ]; then docker rm -f "$cid" >/dev/null 2>&1 || true; fi; done; rm -rf "$tmpdir"' EXIT
+
+          server_cid="$(docker run -d --rm -p 127.0.0.1::3773 "${IMAGE_NAME}:smoke")"
+          server_port="$(docker port "$server_cid" 3773/tcp | sed 's/.*://')"
+          server_ready="false"
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${server_port}/" >/dev/null; then
+              server_ready="true"
+              break
+            fi
+            sleep 1
+          done
+          test "$server_ready" = "true"
+          docker rm -f "$server_cid"
+          server_cid=""
+
           ssh-keygen -q -t ed25519 -N '' -C smoke -f "$tmpdir/id_ed25519"
-          cid="$(
+          ssh_cid="$(
             docker run -d --rm --user 0:0 \
               -e T3CODE_SSH_AUTHORIZED_KEYS="$(cat "$tmpdir/id_ed25519.pub")" \
               -p 127.0.0.1::2222 \
               "${IMAGE_NAME}:smoke" t3-sshd
           )"
-          port="$(docker port "$cid" 2222/tcp | sed 's/.*://')"
+          port="$(docker port "$ssh_cid" 2222/tcp | sed 's/.*://')"
 
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if ssh \
               -o BatchMode=yes \
               -o StrictHostKeyChecking=no \
@@ -97,31 +148,21 @@ jobs:
             t3@127.0.0.1
 
       - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=t3-0.0.28-node-24.18.0-sshd
-            type=sha,prefix=sha-,format=short
-            type=raw,value=latest
-          labels: |
-            org.opencontainers.image.title=t3-code-server
-            org.opencontainers.image.description=Official T3 Code headless server image for Kubernetes
-
-      - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Push tested image
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r tag; do
+            if [ -n "$tag" ]; then
+              docker push "$tag"
+            fi
+          done <<< "$IMAGE_TAGS"
