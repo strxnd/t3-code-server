@@ -182,9 +182,11 @@ attached to the same immutable GitHub release. This lets Renovate update its
 single version pin without a separate checksum-maintenance commit.
 
 The image workflow runs for pull requests, pushes, and every Monday at 03:23
-UTC. Pull requests build and smoke-test without publishing. The weekly run
-bypasses the Docker cache so Debian package updates are included, then publishes
-`latest` and a unique `rebuild-<run-id>` tag.
+UTC. Pull requests build and smoke-test with a read-only token. Pushes and
+scheduled runs use a separate job with `packages: write`, and all publishers are
+serialized so an older build cannot overwrite `latest`. The weekly run bypasses
+the Docker cache so Debian package updates are included, then publishes `latest`
+and a unique `rebuild-<run-id>` tag.
 
 Publishing a new image does not restart existing Kubernetes Pods.
 `imagePullPolicy: Always` only resolves the current image when a container
@@ -197,7 +199,7 @@ the automation must be configured where those manifests live.
 
 The GitHub Actions workflow builds and smoke-tests the image, then pushes:
 
-- `ghcr.io/strxnd/t3-code-server:t3-<t3-version>-node-<node-version>-sshd`
+- `ghcr.io/strxnd/t3-code-server:t3-<t3-version>-node-<node-version>-codex-<codex-version>-claude-<claude-version>-opencode-<opencode-version>-gh-<gh-version>-sshd`
 - `ghcr.io/strxnd/t3-code-server:sha-<shortsha>`
 - `ghcr.io/strxnd/t3-code-server:latest`
 

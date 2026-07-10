@@ -1,12 +1,12 @@
 # renovate: datasource=npm packageName=t3
 ARG T3_VERSION=0.0.28
 # renovate: datasource=npm packageName=@openai/codex
-ARG CODEX_VERSION=0.142.5
+ARG CODEX_VERSION=0.144.1
 # renovate: datasource=npm packageName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.201
+ARG CLAUDE_CODE_VERSION=2.1.206
 # renovate: datasource=npm packageName=opencode-ai
-ARG OPENCODE_VERSION=1.17.13
-# renovate: datasource=github-releases packageName=cli/cli
+ARG OPENCODE_VERSION=1.17.18
+# renovate: datasource=github-releases packageName=cli/cli extractVersion=^v(?<version>.*)$
 ARG GH_VERSION=2.96.0
 
 FROM docker.io/library/node:24.18.0-bookworm-slim@sha256:b31e7a42fdf8b8aa5f5ed477c72d694301273f1069c5a2f71d53c6482e99a2fc AS build

@@ -12,24 +12,55 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: image-${{ github.event_name }}-${{ github.ref }}
+  group: image-${{ github.event_name == 'pull_request' && github.ref || 'publisher' }}
   cancel-in-progress: true
 
 permissions:
   contents: read
-  packages: write
 
 env:
   IMAGE_NAME: ghcr.io/strxnd/t3-code-server
 
 jobs:
-  image:
-    name: Build and publish image
+  validate:
+    name: Validate image
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build validation image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test image
+        run: ./scripts/smoke-test-image.sh "${IMAGE_NAME}:smoke"
+
+  publish:
+    name: Build and publish image
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -38,11 +69,29 @@ jobs:
         id: version
         run: |
           set -euo pipefail
-          t3_version="$(sed -n 's/^ARG T3_VERSION=//p' Dockerfile)"
+          arg_version() {
+            sed -n "s/^ARG $1=//p" Dockerfile
+          }
+
+          t3_version="$(arg_version T3_VERSION)"
+          codex_version="$(arg_version CODEX_VERSION)"
+          claude_version="$(arg_version CLAUDE_CODE_VERSION)"
+          opencode_version="$(arg_version OPENCODE_VERSION)"
+          gh_version="$(arg_version GH_VERSION)"
           node_version="$(sed -n 's/^FROM .*node:\([0-9][0-9.]*\)-.*$/\1/p' Dockerfile | head -n 1)"
-          test -n "$t3_version"
-          test -n "$node_version"
-          echo "tag=t3-${t3_version}-node-${node_version}-sshd" >> "$GITHUB_OUTPUT"
+
+          for version in \
+            "$t3_version" \
+            "$codex_version" \
+            "$claude_version" \
+            "$opencode_version" \
+            "$gh_version" \
+            "$node_version"
+          do
+            test -n "$version"
+          done
+
+          echo "tag=t3-${t3_version}-node-${node_version}-codex-${codex_version}-claude-${claude_version}-opencode-${opencode_version}-gh-${gh_version}-sshd" >> "$GITHUB_OUTPUT"
 
       - name: Docker metadata
         id: meta
@@ -58,7 +107,7 @@ jobs:
             org.opencontainers.image.title=t3-code-server
             org.opencontainers.image.description=Official T3 Code headless server image for Kubernetes
 
-      - name: Build smoke-test image
+      - name: Build publishable image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -72,83 +121,9 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Smoke test image
-        run: |
-          set -eux
-          docker run --rm "${IMAGE_NAME}:smoke" t3 --version
-          docker run --rm "${IMAGE_NAME}:smoke" codex --version
-          docker run --rm "${IMAGE_NAME}:smoke" claude --version
-          docker run --rm "${IMAGE_NAME}:smoke" opencode --version
-          docker run --rm "${IMAGE_NAME}:smoke" gh --version
-          docker run --rm "${IMAGE_NAME}:smoke" git --version
-          docker run --rm "${IMAGE_NAME}:smoke" nano --version
-          docker run --rm "${IMAGE_NAME}:smoke" vi --version
-          docker run --rm "${IMAGE_NAME}:smoke" sh -c 'test "$(id -u):$(id -g)" = "1000:1000"'
-          docker run --rm "${IMAGE_NAME}:smoke" sh -c 'for key in /etc/ssh/ssh_host_*_key; do [ ! -e "$key" ] || exit 1; done'
-          docker run --rm --user 0:0 "${IMAGE_NAME}:smoke" t3-sshd -t
-
-          tmpdir="$(mktemp -d)"
-          server_cid=""
-          ssh_cid=""
-          trap 'for cid in "$server_cid" "$ssh_cid"; do if [ -n "$cid" ]; then docker rm -f "$cid" >/dev/null 2>&1 || true; fi; done; rm -rf "$tmpdir"' EXIT
-
-          server_cid="$(docker run -d --rm -p 127.0.0.1::3773 "${IMAGE_NAME}:smoke")"
-          server_port="$(docker port "$server_cid" 3773/tcp | sed 's/.*://')"
-          server_ready="false"
-          for _ in $(seq 1 30); do
-            if curl -fsS "http://127.0.0.1:${server_port}/" >/dev/null; then
-              server_ready="true"
-              break
-            fi
-            sleep 1
-          done
-          test "$server_ready" = "true"
-          docker rm -f "$server_cid"
-          server_cid=""
-
-          ssh-keygen -q -t ed25519 -N '' -C smoke -f "$tmpdir/id_ed25519"
-          ssh_cid="$(
-            docker run -d --rm --user 0:0 \
-              -e T3CODE_SSH_AUTHORIZED_KEYS="$(cat "$tmpdir/id_ed25519.pub")" \
-              -p 127.0.0.1::2222 \
-              "${IMAGE_NAME}:smoke" t3-sshd
-          )"
-          port="$(docker port "$ssh_cid" 2222/tcp | sed 's/.*://')"
-
-          for _ in $(seq 1 30); do
-            if ssh \
-              -o BatchMode=yes \
-              -o StrictHostKeyChecking=no \
-              -o UserKnownHostsFile="$tmpdir/known_hosts" \
-              -i "$tmpdir/id_ed25519" \
-              -p "$port" \
-              t3@127.0.0.1 \
-              'test "$HOME" = /home/t3 && test "$(id -u):$(id -g)" = "1000:1000"'
-            then
-              break
-            fi
-            sleep 1
-          done
-
-          ssh \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile="$tmpdir/known_hosts" \
-            -i "$tmpdir/id_ed25519" \
-            -p "$port" \
-            t3@127.0.0.1 \
-            'test "$HOME" = /home/t3 && pwd'
-
-          printf 'pwd\nquit\n' | sftp \
-            -b - \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=no \
-            -o UserKnownHostsFile="$tmpdir/known_hosts" \
-            -i "$tmpdir/id_ed25519" \
-            -P "$port" \
-            t3@127.0.0.1
+        run: ./scripts/smoke-test-image.sh "${IMAGE_NAME}:smoke"
 
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -156,13 +131,12 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push tested image
-        if: github.event_name != 'pull_request'
         env:
           IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           set -euo pipefail
           while IFS= read -r tag; do
-            if [ -n "$tag" ]; then
+            if [[ -n "$tag" ]]; then
               docker push "$tag"
             fi
           done <<< "$IMAGE_TAGS"
